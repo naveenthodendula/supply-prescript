@@ -14,13 +14,18 @@ export default function App() {
 
   const change = (k, v) => setShip({ ...ship, [k]: Number(v) });
 
-  const analyse = async () => {
+    const analyse = async () => {
     setMsg("");
     const r = await fetch(`${API}/prescribe`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(ship),
     });
+    if (!r.ok) {
+      setResult(null);
+      setMsg("Invalid shipment data rejected by the data-quality check.");
+      return;
+    }
     setResult(await r.json());
   };
 

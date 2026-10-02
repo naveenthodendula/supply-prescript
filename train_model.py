@@ -5,6 +5,8 @@ from sklearn.metrics import accuracy_score, mean_absolute_error
 from sqlalchemy import inspect
 from xgboost import XGBClassifier, XGBRegressor
 from db import engine
+from data_quality import check_or_halt
+check_or_halt()
 
 FEATURES = ["supplier_reliability", "distance_km", "port_congestion",
             "weather_risk", "order_qty", "month", "planned_lead_days"]

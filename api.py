@@ -3,7 +3,7 @@ import joblib
 import pandas as pd
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import text
 
 from db import engine
@@ -41,14 +41,13 @@ app.add_middleware(CORSMiddleware, allow_origins=["*"],
 
 
 class Shipment(BaseModel):
-    supplier_reliability: float
-    distance_km: int
-    port_congestion: float
-    weather_risk: float
-    order_qty: int
-    month: int
-    planned_lead_days: int
-
+    supplier_reliability: float = Field(ge=0, le=1)
+    distance_km: int = Field(gt=0, le=25000)
+    port_congestion: float = Field(ge=0, le=1)
+    weather_risk: float = Field(ge=0, le=1)
+    order_qty: int = Field(gt=0, le=100000)
+    month: int = Field(ge=1, le=12)
+    planned_lead_days: int = Field(gt=0, le=200)
 
 class Decision(BaseModel):
     shipment: Shipment
