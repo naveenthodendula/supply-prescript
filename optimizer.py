@@ -14,6 +14,9 @@ CONFIG = {
     "launch_penalty_per_day": 900,
     "air_recovers_days": 12,
     "sec_recovers_days": 9,
+         "min_inventory_units": 3000,
+    "current_inventory": 1500,
+    "inbound_units": 5000,
 }
 
 WEIGHTS_FILE = "cost_weights.json"   # the closed loop will update this later
@@ -46,6 +49,13 @@ def prescribe(delay_days, budget=None):
         d,
     ]
     caps = [c["air_capacity"], c["sec_capacity"], 1.0]
+        # Inventory: units that arrive late count as missing stock.
+    # current + inbound * (1 - late_share) >= minimum
+    late_share = [max(d - c["air_recovers_days"], 0) / max(d, 1),
+                  max(d - c["sec_recovers_days"], 0) / max(d, 1),
+                  1.0]
+    inv_shortfall = [c["inbound_units"] * s for s in late_share]
+    inv_limit = c["current_inventory"] + c["inbound_units"] - c["min_inventory_units"]
 
     options = []
     for k in range(3):
@@ -55,8 +65,8 @@ def prescribe(delay_days, budget=None):
 
         res = linprog(
             c=cost,                                   # minimize total cost
-            A_ub=[cost, remaining],                   # cost <= budget, delay <= max
-            b_ub=[budget, c["max_delay_days"]],
+                       A_ub=[cost, remaining, inv_shortfall],
+            b_ub=[budget, c["max_delay_days"], inv_limit],
             A_eq=[[1, 1, 1]], b_eq=[1],               # the whole order is covered
             bounds=bounds,
             method="highs",

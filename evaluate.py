@@ -1,17 +1,10 @@
 import json
 import subprocess
 import sys
-import numpy as np
 import pandas as pd
-from sqlalchemy import text
+from sqlalchemy import text, inspect
 from db import engine
-from optimizer import CONFIG, load_weights, WEIGHTS_FILE
-
-rng = np.random.default_rng()
-
-# The hidden "real world" (stands in for invoices and tracking data).
-# The optimizer does NOT know these numbers. It must learn them.
-TRUE_MULT = {"Air Freight": 1.20, "Secondary Supplier": 1.05, "Delay Launch": 0.95}
+from optimizer import load_weights, WEIGHTS_FILE
 
 OPTION_TO_WEIGHT = {"A": "air", "B": "secondary", "C": "delay"}
 LEARNING_RATE = 0.5
@@ -19,28 +12,21 @@ COST_BIAS_LIMIT = 0.05      # retrain if actual cost is off by more than 5% over
 DELAY_ERROR_LIMIT = 1.8     # or average delay error is above 1.8 days
 
 
-def real_world_outcome(ship, mix):
-    c = CONFIG
-    extra = (10 * ship["port_congestion"] + 8 * ship["weather_risk"]
-             + 15 * (1 - ship["supplier_reliability"]) + rng.normal(0, 1.5))
-    d = max(int(round(extra)), 1)
-    base = {
-        "Air Freight": c["air_cost_per_delay_day"] * d,
-        "Secondary Supplier": c["order_value"] * c["sec_premium"],
-        "Delay Launch": c["launch_penalty_per_day"] * d,
-    }
-    remain = {
-        "Air Freight": max(d - c["air_recovers_days"], 0),
-        "Secondary Supplier": max(d - c["sec_recovers_days"], 0),
-        "Delay Launch": d,
-    }
-    cost = sum(base[k] * TRUE_MULT[k] * rng.normal(1, 0.03) * mix.get(k, 0) for k in base)
-    left = sum(remain[k] * mix.get(k, 0) for k in base)
-    return d, round(float(cost), 2), round(float(left), 1)
-
-
 def run_evaluation():
-    df = pd.read_sql("SELECT * FROM decisions WHERE evaluated = FALSE", engine)
+    if not inspect(engine).has_table("actual_outcomes"):
+        print("No actual outcomes recorded yet.")
+        return None
+
+    # Decisions that have an actual outcome stored in the database
+    df = pd.read_sql("""
+        SELECT d.id, d.option, d.shipment_json, d.predicted_cost,
+               d.predicted_delay_days,
+               o.true_delay_days, o.actual_cost AS outcome_cost,
+               o.actual_remaining_delay
+        FROM decisions d
+        JOIN actual_outcomes o ON o.decision_id = d.id
+        WHERE d.evaluated = FALSE
+    """, engine)
     if df.empty:
         print("No new decisions to evaluate.")
         return None
@@ -49,19 +35,19 @@ def run_evaluation():
     new_shipments = []
     for _, r in df.iterrows():
         ship = json.loads(r["shipment_json"])
-        mix = json.loads(r["mix_json"])
-        d_true, actual_cost, actual_left = real_world_outcome(ship, mix)
         records.append({
             "id": int(r["id"]), "option": r["option"],
-            "pred_cost": float(r["predicted_cost"]), "actual_cost": actual_cost,
-            "pred_delay": float(r["predicted_delay_days"]), "true_delay": d_true,
-            "actual_left": actual_left,
+            "pred_cost": float(r["predicted_cost"]),
+            "actual_cost": float(r["outcome_cost"]),
+            "pred_delay": float(r["predicted_delay_days"]),
+            "true_delay": float(r["true_delay_days"]),
+            "actual_left": float(r["actual_remaining_delay"]),
         })
-        new_shipments.append({**ship, "delay_days": d_true})
+        new_shipments.append({**ship, "delay_days": int(r["true_delay_days"])})
 
     res = pd.DataFrame(records)
 
-    # 1) Write the real outcomes back to the database
+    # 1) Write the evaluation result back onto the decisions
     with engine.begin() as conn:
         for _, r in res.iterrows():
             conn.execute(text(
